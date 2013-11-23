@@ -45,7 +45,7 @@ class MaxEnt {
         c <- classes
         file <- (new File(c)).listFiles.toList
     } yield Math.log(classify(model, classes, file)(c))
-    ).toList.reduceLeft(_+_) + lambdas.toList.map(Math.log(_)).reduceLeft(_+_))
+    ).toList.reduceLeft(_+_) + lambdas.toList.map(Math.log(_)).reduceLeft(_+_)) //TODO: Figure out how to actually do the Gaussian prior
   }
 
   def classify(model: Map[Tuple2[String, String], Double], classes: Array[String], file: File): Map[String, Double] = {
