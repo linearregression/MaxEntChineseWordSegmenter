@@ -13,15 +13,15 @@ class MaxEnt {
     val constraints = Map[Tuple2[String, String], Double]().withDefaultValue(0)
 
     classes.foreach{ c =>
-        model(c -> "DEFAULT") = 0
+      model(c -> "DEFAULT") = 0
 
-        for{
-            file <- (new File(c)).listFiles.toList.map(Source.fromFile(_))
-            word <- file.mkString.split(" ").map(_.toLowerCase)
-        }{
-            constraints(cls -> word) += 1
-            classes.foreach( cls => model(cls -> word) = 0 )
-        }
+      for{
+        file <- (new File(c)).listFiles.toList.map(Source.fromFile(_))
+        word <- file.mkString.split(" ").map(_.toLowerCase)
+      }{
+        constraints(cls -> word) += 1
+        classes.foreach( cls => model(cls -> word) = 0 )
+      }
     }
 
     val originalLambdas = model.values.toArray
@@ -55,11 +55,11 @@ class MaxEnt {
                                           )
                  ).toList.foldLeft(Map[String, Double]())(_+_)
 
-      val minimum = scores.values.min
-      val exScores = scores.mapValues( score => Math.exp(score - minimum) )
-      val normalizer = exScores.values.reduceLeft(_+_)
+    val minimum = scores.values.min
+    val exScores = scores.mapValues( score => Math.exp(score - minimum) )
+    val normalizer = exScores.values.reduceLeft(_+_)
 
-      exScores.mapValues( score => score/normalizer ) //.toList.sortWith( (x,y) => x._2 > y._2 )
+    exScores.mapValues( score => score/normalizer ) //.toList.sortWith( (x,y) => x._2 > y._2 )
   }
 
   private object CGWrapper {
