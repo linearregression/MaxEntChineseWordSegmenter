@@ -7,84 +7,82 @@ import cc.factorie.model.{Parameters, Weights}
 
 class MaxEnt {
 
-    def train(dirs:List[String]): Map[Tuple2[String, String], Double] = {
-        val classes = dirs
-        val model = Map[Tuple2[String, String], Double]().withDefaultValue(0)
-        val constraints = Map[Tuple2[String, String], Double]().withDefaultValue(0)
+  def train(dirs:List[String]): Map[Tuple2[String, String], Double] = {
+    val classes = dirs
+    val model = Map[Tuple2[String, String], Double]().withDefaultValue(0)
+    val constraints = Map[Tuple2[String, String], Double]().withDefaultValue(0)
 
-        classes.foreach{ c =>
-            model(c -> "DEFAULT") = 0
+    classes.foreach{ c =>
+        model(c -> "DEFAULT") = 0
 
-            for{
-                file <- (new File(c)).listFiles.toList.map(Source.fromFile(_))
-                word <- file.mkString.split(" ").map(_.toLowerCase)
-            }{
-                constraints(cls -> word) += 1
-                classes.foreach( cls => model(cls -> word) = 0 )
-            }
+        for{
+            file <- (new File(c)).listFiles.toList.map(Source.fromFile(_))
+            word <- file.mkString.split(" ").map(_.toLowerCase)
+        }{
+            constraints(cls -> word) += 1
+            classes.foreach( cls => model(cls -> word) = 0 )
         }
-
-        val features = model.keys
-        val originalLambdas = model.values.toArray
-        val optimizedLambdas = CGWrapper.fminNCG(value, gradient, originalLambdas)
-
-        model
     }
 
-    def gradient(lambdas: Array[Double], keys: Array[Tuple2[String, String]], dirs: Array[String]): Array[Double] = {
-        val gradient = new Array[Double](55)
-        //TODO Implement the gradient
-        gradient
-    }
+    val originalLambdas = model.values.toArray
+    val optimizedLambdas = CGWrapper.fminNCG(value, gradient, originalLambdas)
 
-    def value(lambdas: Array[Double], keys: Array[Tuple2[String, String]], dirs: Array[String]): Double = {
-        val model = keys.zip(lambdas).foldLeft(Map[Tuple2[String, String], Double]())(_+_)
-        val classes = dirs
-        val totalLogProb = 0
+    model.keys.zip(optimizedLambdas).foldLeft(Map[Tuple2[String, String], Double]())(_+_) 
+  }
 
-        -((for{
-            c <- classes
-            file <- (new File(c)).listFiles.toList
-        } yield Math.log(classify(model, classes, file)(c))
-        ).toList.reduceLeft(_+_) + lambdas.toList.map(Math.log(_)).reduceLeft(_+_))
-    }
+  def gradient(lambdas: Array[Double], keys: Array[Tuple2[String, String]], dirs: Array[String]): Array[Double] = {
+    val gradient = new Array[Double](55)
+    //TODO Implement the gradient
+    gradient
+  }
 
-    def classify(model: Map[Tuple2[String, String], Double], classes: Array[String], file: File): List[Tuple2[String, Double]] = {
-        val scores = (for(c <- classes)
-            yield (c ->
-                    (for(word <- Source.fromFile(file).mkString.split(" ").map(_.toLowerCase))
-            yield model(c -> word)
-        ).toList.foldLeft(model(c -> "DEFAULT"))(_+_)
-        )
-        ).toList.foldLeft(Map[String, Double]())(_+_)
+  def value(lambdas: Array[Double], keys: Array[Tuple2[String, String]], dirs: Array[String]): Double = {
+    val model = keys.zip(lambdas).foldLeft(Map[Tuple2[String, String], Double]())(_+_)
+    val classes = dirs
+    val totalLogProb = 0
 
-        val minimum = scores.values.min
-        val exScores = scores.mapValues( score => Math.exp(score - minimum) )
-        val normalizer = exScores.values.reduceLeft(_+_)
+    -((for{
+        c <- classes
+        file <- (new File(c)).listFiles.toList
+    } yield Math.log(classify(model, classes, file)(c))
+    ).toList.reduceLeft(_+_) + lambdas.toList.map(Math.log(_)).reduceLeft(_+_))
+  }
 
-        exScores.mapValues( score => score/normalizer ).toList.sortWith( (x,y) => x._2 > y._2 )
-    }
+  def classify(model: Map[Tuple2[String, String], Double], classes: Array[String], file: File): Map[String, Double] = {
+    val scores = (for(c <- classes) yield (c ->
+                                           (for(word <- Source.fromFile(file).mkString.split(" ").map(_.toLowerCase)) yield model(c -> word)
+                                           ).toList.foldLeft(model(c -> "DEFAULT"))(_+_)
+                                          )
+                 ).toList.foldLeft(Map[String, Double]())(_+_)
 
-    private object CGWrapper {
-        def fminNCG(value: (Array[Double], Array[Tuple2[String, String]], Array[String]) => Double,
+      val minimum = scores.values.min
+      val exScores = scores.mapValues( score => Math.exp(score - minimum) )
+      val normalizer = exScores.values.reduceLeft(_+_)
+
+      exScores.mapValues( score => score/normalizer ) //.toList.sortWith( (x,y) => x._2 > y._2 )
+  }
+
+  private object CGWrapper {
+    def fminNCG(value: (Array[Double], Array[Tuple2[String, String]], Array[String]) => Double,
                 gradient: (Array[Double], Array[Tuple2[String, String]], Array[String]) => Array[Double],
-                initialWeights: Array[Double]): Array[Double] = {
-                val model = new Parameters { val weights = Weights(new DenseTensor1(initialWeights.size)) }
+                initialWeights: Array[Double]
+               ): Array[Double] = {
+      val model = new Parameters { val weights = Weights(new DenseTensor1(initialWeights.size)) }
 
-                model.weights.value := initialWeights
+      model.weights.value := initialWeights
 
-        val optimizer = new ConjugateGradient
-        val gradientMap = model.parameters.blankDenseMap
+      val optimizer = new ConjugateGradient
+      val gradientMap = model.parameters.blankDenseMap
 
-        while (!optimizer.isConverged) {
-            gradientMap(model.weights) = new DenseTensor1(gradient(model.weights.value.toArray))
+      while (!optimizer.isConverged) {
+        gradientMap(model.weights) = new DenseTensor1(gradient(model.weights.value.toArray))
 
-            val currentValue = value(model.weights.value.toArray)
+        val currentValue = value(model.weights.value.toArray)
 
-            optimizer.step(model.parameters, gradientMap, currentValue)
-        }
+        optimizer.step(model.parameters, gradientMap, currentValue)
+      }
 
-        model.weights.value.toArray
-        }
+      model.weights.value.toArray
     }
+  }
 }
