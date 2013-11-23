@@ -25,6 +25,7 @@ class MaxEnt {
     }
 
     val originalLambdas = model.values.toArray
+    //TODO: Fix the argument list in the fminNCG method call after I fix the parameter list in the definition
     val optimizedLambdas = CGWrapper.fminNCG(value, gradient, originalLambdas)
 
     model.keys.zip(optimizedLambdas).foldLeft(Map[Tuple2[String, String], Double]())(_+_) 
@@ -63,6 +64,7 @@ class MaxEnt {
   }
 
   private object CGWrapper {
+    //TODO: Fix the parameter list so that it provides everything necessary for method calls to value and gradient
     def fminNCG(value: (Array[Double], Array[Tuple2[String, String]], Array[String]) => Double,
                 gradient: (Array[Double], Array[Tuple2[String, String]], Array[String]) => Array[Double],
                 initialWeights: Array[Double]
