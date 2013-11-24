@@ -1,3 +1,5 @@
+package MaxEntClassification
+
 import scala.collection.mutable.Map
 import scala.io.Source
 import java.io.File
