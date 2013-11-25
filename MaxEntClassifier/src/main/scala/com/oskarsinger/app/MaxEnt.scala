@@ -1,6 +1,7 @@
 package MaxEntClassification
 
 import scala.collection.mutable.Map
+import scala.collection.mutable.ArrayBuffer
 import scala.io.Source
 import java.io.File
 import cc.factorie.la.DenseTensor1
@@ -11,8 +12,8 @@ class MaxEnt {
 
   def train(dirs:List[String]): Map[Tuple2[String, String], Double] = {
     val classes = dirs
-    val model = Map[Tuple2[String, String], Double]().withDefaultValue(0)
-    val constraints = Map[Tuple2[String, String], Double]().withDefaultValue(0)
+    val model = Map[Tuple2[String, String], Int]()
+    val stats = new ArrayBuffer[Tuple2[Int, Double]]()
 
     classes.foreach{ c =>
       model(c -> "DEFAULT") = 0
@@ -21,41 +22,41 @@ class MaxEnt {
         file <- (new File(c)).listFiles.toList.map(Source.fromFile(_))
         word <- file.mkString.split(" ").map(_.toLowerCase)
       }{
-        constraints(c -> word) += 1
-        classes.foreach( cls => model(cls -> word) = 0 )
+        val feature = c -> word
+        if( model.contains(feature) ){
+          val old = stats(model(feature))
+          stats(model(feature)) = ((old._1 + 1) -> old._2)
+        } else {
+          stats += (1 -> 0)
+          model(feature) = stats.size - 1
+        }
       }
     }
 
-    val optimizedLambdas = CGWrapper.fminNCG(value, gradient, model).toList
+    val optimizedLambdas = CGWrapper.fminNCG(value, gradient, stats.toArray)
 
-    model.keys.zip(optimizedLambdas).foldLeft(Map[Tuple2[String, String], Double]())(_+_) 
+    (for((feature, index) <- model) 
+      yield (feature -> optimizedLambdas(index))
+    ).toList.foldLeft(Map[Tuple2[String, String], Double]())(_+_)
   }
 
-  def gradient(lambdas: Array[Double], keys: List[Tuple2[String, String]], dirs: List[String]): Array[Double] = {
-    val gradient = new Array[Double](55)
-    //TODO Implement the gradient
-    gradient
-  }
+  def gradient(stats: Array[Tuple2[Int, Double]]): Array[Double] = stats.toList.map( stat => stat._1 - (stat._2 * stat._1) ).toArray
 
-  def value(lambdas: Array[Double], keys: List[Tuple2[String, String]], dirs: List[String]): Double = {
-    val model = keys.zip(lambdas).foldLeft(Map[Tuple2[String, String], Double]())(_+_)
-    val classes = dirs
-    val totalLogProb = (for{
-                            c <- classes
-                            file <- (new File(c)).listFiles.toList
-                        } yield Math.log(classify(model, classes, file)(c))
-                       ).toList.reduceLeft(_+_)
-    
-    val gaussianPrior = lambdas.toList.map(Math.log(_)).reduceLeft(_+_) //TODO: Figure out how to actually do the Gaussian prior
+  def value(stats: Array[Tuple2[Int, Double]]): Double = {
+    val totalLogProb = stats.toList.map( stat => stat._1 * stat._2 ).sum
+    //TODO: Make these ex-normalized
+    //TODO: Figure out how to actually do the Gaussian prior
+    val gaussianPrior = stats.toList.map( stat => stat._2 ).toList.map(Math.log(_)).reduceLeft(_+_)
 
     -(totalLogProb + gaussianPrior)
   }
 
   def classify(model: Map[Tuple2[String, String], Double], classes: List[String], file: File): Map[String, Double] = {
-    val scores = (for(c <- classes) yield (c ->
-                                           (for(word <- Source.fromFile(file).mkString.split(" ").map(_.toLowerCase)) yield model(c -> word)
-                                           ).toList.foldLeft(model(c -> "DEFAULT"))(_+_)
-                                          )
+    val scores = (for(c <- classes) 
+                    yield (c -> (for(word <- Source.fromFile(file).mkString.split(" ").map(_.toLowerCase)) 
+                                   yield model(c -> word)
+                                ).toList.foldLeft(model(c -> "DEFAULT"))(_+_)
+                          )
                  ).toList.foldLeft(Map[String, Double]())(_+_)
 
     val minimum = scores.values.min
@@ -70,13 +71,12 @@ class MaxEnt {
   }
 
   private object CGWrapper {
-    def fminNCG(value: (Array[Double], List[Tuple2[String, String]], List[String]) => Double,
-                gradient: (Array[Double], List[Tuple2[String, String]], List[String]) => Array[Double],
-                oldModel: Map[Tuple2[String, String], Double]
+    def fminNCG(value: (Array[Tuple2[Int, Double]]) => Double,
+                gradient: (Array[Tuple2[Int, Double]]) => Array[Double],
+                stats: Array[Tuple2[Int, Double]]
                ): Array[Double] = {
-      val initialWeights = oldModel.values
-      val keys = oldModel.keys.toList
-      val dirs = keys.map( x => x._1 )
+      val initialWeights = stats.map( stat => stat._2 ).toArray
+      val features = stats.map( stat => stat._1 ).toArray
       val model = new Parameters { val weights = Weights(new DenseTensor1(initialWeights.size)) }
 
       model.weights.value := initialWeights.toArray
@@ -85,9 +85,11 @@ class MaxEnt {
       val gradientMap = model.parameters.blankDenseMap
 
       while (!optimizer.isConverged) {
-        gradientMap(model.weights) = new DenseTensor1(gradient(model.weights.value.asArray, keys, dirs))
+        val newStats = features.toList.zip(model.weights.value.asArray.toList).toArray
 
-        val currentValue = value(model.weights.value.asArray, keys, dirs)
+        gradientMap(model.weights) = new DenseTensor1(gradient(newStats))
+
+        val currentValue = value(newStats)
 
         optimizer.step(model.parameters, gradientMap, currentValue)
       }
