@@ -4,6 +4,7 @@ import scala.collection.mutable.Map
 import scala.collection.mutable.ArrayBuffer
 import scala.io.Source
 import java.io.File
+import play.api.libs.json._
 import cc.factorie.la.DenseTensor1
 import cc.factorie.optimize.ConjugateGradient
 import cc.factorie.model.{Parameters, Weights}
@@ -40,7 +41,8 @@ class MaxEnt {
     ).toList.foldLeft(Map[Tuple2[String, String], Double]())(_+_)
   }
 
-  def gradient(stats: Array[Tuple2[Int, Double]]): Array[Double] = stats.toList.map( stat => stat._1 - (stat._2 * stat._1) ).toArray
+  def gradient(stats: Array[Tuple2[Int, Double]]): Array[Double] = 
+    stats.toList.map( stat => stat._1 - (stat._2 * stat._1) ).toArray
 
   def value(stats: Array[Tuple2[Int, Double]]): Double = {
     val totalLogProb = stats.toList.map( stat => stat._1 * stat._2 ).sum
@@ -51,7 +53,8 @@ class MaxEnt {
     -(totalLogProb + gaussianPrior)
   }
 
-  def classify(model: Map[Tuple2[String, String], Double], classes: List[String], file: File): Map[String, Double] = {
+  def classify(model: Map[Tuple2[String, String], Double], file: File): Map[String, Double] = {
+    val classes = model.keys.map( key => key._1 ).toList.distinct
     val scores = (for(c <- classes) 
                     yield (c -> (for(word <- Source.fromFile(file).mkString.split(" ").map(_.toLowerCase)) 
                                    yield model(c -> word)
@@ -59,15 +62,29 @@ class MaxEnt {
                           )
                  ).toList.foldLeft(Map[String, Double]())(_+_)
 
+    expNormalize(scores)
+  }
+
+  def expNormalize(scores: Map[String, Double]): Map[String, Double] = {
     val minimum = scores.values.min
     val exScores = scores.map( score => score._1 -> Math.exp(score._2 - minimum) )
-    val normalizer = exScores.values.reduceLeft(_+_)
+    val normalizer = exScores.values.sum
+    val normScores = exScores.map( score => score._1 -> score._2/normalizer )
 
-    val normScores = exScores.map( score => score._1 -> score._2/normalizer ) //.toList.sortWith( (x,y) => x._2 > y._2 )
-
-    assert( normScores.values.reduceLeft(_+_) == 1 )
+    assert( normScores.values.sum == 1 )
 
     normScores
+  }
+
+  def parseDatum(string: String): Tuple3[String, String, Map[String, Boolean]] = {
+    val json = Json.parse(string)
+
+    val refDom = (json \ "referer_domain")(0).as[String]
+    val hasVisited = (json \ "visited_shared_page")(0).as[Boolean]
+    val copyChoices = (json \ "copy_choices")(0).as[List[String]]
+    val landingPages = (for(c <- copyChoices) yield ( c -> (json \ c)(1).as[Boolean] )).foldLeft(Map[String, Boolean]())(_+_)
+    
+    (refDom, (if(hasVisited) "TRUE" else "FALSE"), landingPages)
   }
 
   private object CGWrapper {
