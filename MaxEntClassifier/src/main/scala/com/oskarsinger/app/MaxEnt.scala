@@ -4,7 +4,6 @@ import scala.collection.mutable.Map
 import scala.collection.mutable.ArrayBuffer
 import scala.io.Source
 import java.io.File
-import play.api.libs.json._
 import cc.factorie.la.DenseTensor1
 import cc.factorie.optimize.ConjugateGradient
 import cc.factorie.model.{Parameters, Weights}
@@ -74,17 +73,6 @@ class MaxEnt {
     assert( normScores.values.sum == 1 )
 
     normScores
-  }
-
-  def parseDatum(string: String): Tuple3[String, String, Map[String, Boolean]] = {
-    val json = Json.parse(string)
-
-    val refDom = (json \ "referer_domain")(0).as[String]
-    val hasVisited = (json \ "visited_shared_page")(0).as[Boolean]
-    val copyChoices = (json \ "copy_choices")(0).as[List[String]]
-    val landingPages = (for(c <- copyChoices) yield ( c -> (json \ c)(1).as[Boolean] )).foldLeft(Map[String, Boolean]())(_+_)
-    
-    (refDom, (if(hasVisited) "TRUE" else "FALSE"), landingPages)
   }
 
   private object CGWrapper {
