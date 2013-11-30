@@ -6,12 +6,13 @@ import java.io.File
 
 class PageClassification {
 
-  def classify(datum: (String, String, Map[String, Boolean]), 
+  def classify(datum: String,
                model: Map[(String, String), Double] = Map[(String, String), Double]().withDefaultValue(0)
               ): (String, Map[(String, String), Double]) = {
-    val refDom = datum._1
-    val hasVisitedSharePage = datum._2
-    val copyChoices = datum._3
+    val parsedDatum = parseDatum(datum)
+    val refDom = parsedDatum._1
+    val hasVisitedSharePage = parsedDatum._2
+    val copyChoices = parsedDatum._3
     
     //TODO: Implement Thompson sampling 
     val scores = (for(c <- copyChoices.keys)
@@ -45,5 +46,13 @@ class PageClassification {
 
   def optimize(model: Map[(String, String), Double], gradient: () => Array[Double]): Map[(String, String), Double] = {
     model 
+  }
+
+  def parseDatum(datum: String): (String, String, Map[String, Boolean]) = {
+    val refDom = "a.com"
+    val hasVisitedSharedPage = "TRUE"
+    val copyChoices = Map("a" -> true, "b" -> false, "c" -> false)
+
+    (refDom, hasVisitedSharedPage, copyChoices)
   }
 } 
