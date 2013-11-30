@@ -106,7 +106,7 @@ class MaxEntChineseWordSegmenter {
     for{
       (feature, index) <- model
       tag = feature._1
-    } featureCounts(index) = featureCounts(index) - probability(tag) * featureCounts(index)
+    } featureCounts(index) = featureCounts(index) - (probability(tag) * featureCounts(index)) - (weights(index) / 2)
      
     featureCounts
   }
@@ -119,9 +119,9 @@ class MaxEntChineseWordSegmenter {
          entry <- entries
        } yield Math.log(tagScores(entry, model, weights, classes)(tag))
       ).toList.reduceLeft(_+_)
-    val gaussianPrior = 0.0 //TODO: add gaussian prior
+    val gaussianPrior = weights.toList.map( weight => weight * weight ).sum
     
-    -(totalLogProb + gaussianPrior)
+    -(totalLogProb - gaussianPrior)
   }
 
   def tagScores(features: List[String], model: Map[(String, String), Int], weights: Array[Double], classes: List[String]): Map[String, Double] = {
