@@ -10,6 +10,35 @@ import cc.factorie.model.{Parameters, Weights}
 
 class MaxEntChineseWordSegmenter {
 
+  //Returns a list of 2-tuples that holds the characters of a phrase
+  //original order mapped to their maxent-classified tags
+  def segment(text: String, model: Map[(String, String), Double]): List[(String, String)] = {
+    val characters = text.toList.map( character => character.toString )
+    val weightsBuffer = new ArrayBuffer[Double]()
+    val featureMap = Map[(String, String), Int]()
+    val classes = model.keys.map( key => key._1 ).toList.distinct
+
+    model.foreach{ case (feature, weight) =>
+      weightsBuffer += weight
+      featureMap(feature) = weightsBuffer.size - 1
+    }
+
+    val weights = weightsBuffer.toArray
+
+    (for( i <- 0 until characters.size )
+       yield (characters(i) -> 
+                tagScores(getFeatures(i, characters), featureMap, weights, classes).toList.sortWith( (x,y) => x._2 > y._2 )(0)._1
+             )
+    ).toList.foldRight(List[(String, String)]())(_+:_)
+  }
+
+  //Returns the list of features for a character in an unsegmented data set
+  def getFeatures(i: Int, characters: List[String]): List[String] = {
+    if( i == 0 ) List( characters(i), ("NEXT" + characters(i+1))) 
+    else if(i == characters.size - 1) List( ("PREV" + characters(i-1)), characters(i) )
+    else List( ("PREV" + characters(i-1)), characters(i), ("NEXT" + characters(i+1)) )
+  }
+
   def train(filePath: String): Map[(String, String), Double] = {
     val taggedTraining = getLabeledDataSet(filePath).toArray
     val weights = new ArrayBuffer[Double]()
@@ -49,6 +78,8 @@ class MaxEntChineseWordSegmenter {
     ).toList.foldLeft(Map[Tuple2[String, String], Double]())(_+_)
   }
 
+  //Labels a pre-segmented training set based on this tag set: 
+  //LL (first) MM (middle) RR (right) LR (solitary) PP (punctuation)
   def getLabeledDataSet(filePath: String): List[(Char, String)] = {
     (for{
        line <- Source.fromFile(filePath).getLines.toList  
@@ -58,6 +89,7 @@ class MaxEntChineseWordSegmenter {
     ).toList.foldRight(List[(Char, String)]())(_+:_)
   }
 
+  //Returns a 2-tuple of an instance of character from a training set mapped to its tag
   def getTaggedCharacter(i: Int, line: String): (Char, String) = {
     val tag =
       if(isFirst(i, line) && isLast(i, line)) "LR"
@@ -70,8 +102,10 @@ class MaxEntChineseWordSegmenter {
     (line(i) -> tag)
   }
 
+  //Checks if a character in a training set is first in a word
   def isFirst(i: Int, line: String): Boolean = (i == 0 || isWhiteSpace(line(i-1))) && !isPunctuation(line(i))
 
+  //Checks if a character in a training set is last in a word
   def isLast(i: Int, line: String): Boolean = (i == (line.size - 1) || isWhiteSpace(line(i+1))) && !isPunctuation(line(i))
 
   def isPunctuation(character: Char): Boolean = {
@@ -124,6 +158,7 @@ class MaxEntChineseWordSegmenter {
     -(totalLogProb - gaussianPrior)
   }
 
+  //Gives a map from tags to exponentially normalized scores for a character based on its features and the corresponding weights
   def tagScores(features: List[String], model: Map[(String, String), Int], weights: Array[Double], classes: List[String]): Map[String, Double] = {
     val scores =
       (for( c <- classes )
@@ -136,6 +171,7 @@ class MaxEntChineseWordSegmenter {
     expNormalize(scores)
   }
 
+  //Exponentially normalizes the scores for each tag
   def expNormalize(scores: Map[String, Double]): Map[String, Double] = {
     val minimum = scores.values.min
     val exScores = scores.map( score => score._1 -> Math.exp(score._2 - minimum) )

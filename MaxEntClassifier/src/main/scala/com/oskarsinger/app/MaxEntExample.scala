@@ -2,8 +2,8 @@ import MaxEntClassification.MaxEntChineseWordSegmenter
 
 object MaxEntExample extends App {
 
-  val maxEnt = new MaxEntChineseWordSegmenter()
-
-  maxEnt.getLabeledDataSet("/home/oskar/GitRepos/SegmentationData/training/pku_training.utf8").foreach(println)
-
+  val segmenter = new MaxEntChineseWordSegmenter()
+  val trainingCorpusPath = "/home/oskar/GitRepos/SegmentationData/training/pku_training.utf8"
+  val model = segmenter.train(trainingCorpusPath)
+  println("Model size: " + model.size)
 }
