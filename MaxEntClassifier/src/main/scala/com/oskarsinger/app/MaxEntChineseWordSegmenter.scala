@@ -11,32 +11,41 @@ import cc.factorie.model.{Parameters, Weights}
 class MaxEntChineseWordSegmenter {
 
   def train(filePath: String): Map[(String, String), Double] = {
-    val classes = List(filePath)
-    val model = Map[Tuple2[String, String], Int]()
-    val stats = new ArrayBuffer[Tuple2[Int, Double]]()
+    val taggedTraining = getLabeledDataSet(filePath).toArray
+    val weights = new ArrayBuffer[Double]()
+    val model = Map[(String, String), Int]()
+    val cache = Map[String, ArrayBuffer[List[String]]]().withDefault( x => new ArrayBuffer[List[String]]() )
 
-    classes.foreach{ c =>
-      model(c -> "DEFAULT") = 0
+    ( 0 until taggedTraining.size ).foreach{ i =>
+      val current = taggedTraining(i) 
+      val character = current._1.toString
+      val tag = current._2
+      val features: List[(String, String)] = 
+        if( i == 0 ) List( (tag -> character), (tag -> ("NEXT" + taggedTraining(i+1)._1))) 
+        else if(i == taggedTraining.size - 1) List( (tag -> ("PREV" + taggedTraining(i-1)._1)), (tag -> character) )
+        else List( (tag -> ("PREV" + taggedTraining(i-1)._1)), (tag -> character), (tag -> ("NEXT" + taggedTraining(i+1)._1)) )
 
-      for{
-        file <- (new File(c)).listFiles.toList.map(Source.fromFile(_))
-        word <- file.mkString.split(" ").map(_.toLowerCase)
-      }{
-        val feature = c -> word
-        if( model.contains(feature) ){
-          val old = stats(model(feature))
-          stats(model(feature)) = ((old._1 + 1) -> old._2)
-        } else {
-          stats += (1 -> 0)
-          model(feature) = stats.size - 1
+      cache(tag) = cache(tag)
+      cache(tag) += features.map( feature => feature._2 )
+
+      features.foreach{ feature =>
+        if(!model.contains(feature)){
+          weights += 0.0
+          model(feature) = weights.size - 1
         }
       }
     }
 
-    val optimizedLambdas = CGWrapper.fminNCG(value, gradient, stats.toArray)
+    cache.keys.foreach{ tag =>
+      weights += 0.0
+      model(tag -> "DEFAULT") = weights.size
+    }
+
+    val listCache = cache.map( tagEntry => tagEntry._1 -> tagEntry._2.toList )
+    val optimizedWeights = CGWrapper.fminNCG(value, gradient, listCache, model, weights.toArray)
 
     (for((feature, index) <- model) 
-      yield (feature -> optimizedLambdas(index))
+      yield (feature -> optimizedWeights(index))
     ).toList.foldLeft(Map[Tuple2[String, String], Double]())(_+_)
   }
 
@@ -46,7 +55,7 @@ class MaxEntChineseWordSegmenter {
        i <- 0 until line.size
        if !isWhiteSpace(line(i))
      } yield getTaggedCharacter(i, line)
-    ).toList.foldLeft(List[(Char, String)]())(_:+_)
+    ).toList.foldRight(List[(Char, String)]())(_+:_)
   }
 
   def getTaggedCharacter(i: Int, line: String): (Char, String) = {
@@ -54,48 +63,75 @@ class MaxEntChineseWordSegmenter {
       if(isFirst(i, line) && isLast(i, line)) "LR"
       else if(isFirst(i, line)) "LL"
       else if(isLast(i, line)) "RR"
-      else if(!isWhiteOrPunct(line(i))) "MM"
+      else if(!isPunctuation(line(i))) "MM"
       else if(isPunctuation(line(i))) "PP"
       else "<INVALID>"
     
     (line(i) -> tag)
   }
 
-  def isFirst(i: Int, line: String): Boolean = (i == 0 || isWhiteOrPunct(line(i-1))) && !isWhiteOrPunct(line(i))
+  def isFirst(i: Int, line: String): Boolean = (i == 0 || isWhiteSpace(line(i-1))) && !isPunctuation(line(i))
 
-  def isLast(i: Int, line: String): Boolean = (i == (line.size - 1) || isWhiteOrPunct(line(i+1))) && !isWhiteOrPunct(line(i))
-
-  def isWhiteOrPunct(character: Char): Boolean = isPunctuation(character) || isWhiteSpace(character)
+  def isLast(i: Int, line: String): Boolean = (i == (line.size - 1) || isWhiteSpace(line(i+1))) && !isPunctuation(line(i))
 
   def isPunctuation(character: Char): Boolean = {
     val punctuationChars = 
-      List( (0x3000 to 0x303F), (0x2400 to 0x243F), (0xFF00 to 0xFFEF), (0x2000 to 0x206F) )
+      List( (0x3000, 0x303F), (0x2400, 0x243F), (0xFF00, 0xFF0F), (0xFF1A, 0xFFEF), (0x2000, 0x206F) )
     
-    punctuationChars.exists( _.contains(character) )
+    punctuationChars.exists( range => character >= range._1 && character <= range._2 )
   }
 
-  def isWhiteSpace(character: Char): Boolean = (0x0000 to 0x000F).contains(character)
+  def isWhiteSpace(character: Char): Boolean = List( (0x0000, 0x0020) ).exists( range => character >= range._1 && character <= range._2)
 
-  def gradient(stats: Array[Tuple2[Int, Double]]): Array[Double] = 
-    stats.toList.map( stat => stat._1 - (stat._2 * stat._1) ).toArray
+  def gradient(cache: Map[String, List[List[String]]], model: Map[(String, String), Int], weights: Array[Double]): Array[Double] = {
+    val classes = cache.keys.toList
+    val featureCounts = new Array[Double](weights.size)
 
-  def value(stats: Array[Tuple2[Int, Double]]): Double = {
-    val totalLogProb = stats.toList.map( stat => stat._1 * stat._2 ).sum
-    //TODO: Make these ex-normalized
-    //TODO: Figure out how to actually do the Gaussian prior
-    val gaussianPrior = stats.toList.map( stat => stat._2 ).toList.map(Math.log(_)).reduceLeft(_+_)
+    for{
+      (tag, entries) <- cache
+      entry <- entries
+      feature <- entry
+    } featureCounts(model(tag -> feature)) += 1
+    
+    val probability =
+      (for(tag <- classes)
+         yield (tag -> (for{
+                          entries <- cache.values
+                          entry <- entries
+                        } yield tagScores(entry, model, weights, classes)(tag)
+                       ).toList.reduceLeft(_+_)
+               )
+      ).toList.foldLeft(Map[String, Double]())(_+_)
 
+    for{
+      (feature, index) <- model
+      tag = feature._1
+    } featureCounts(index) = featureCounts(index) - probability(tag) * featureCounts(index)
+     
+    featureCounts
+  }
+
+  def value(cache: Map[String, List[List[String]]], model: Map[(String, String), Int], weights: Array[Double]): Double = {
+    val classes = cache.keys.toList
+    val totalLogProb =
+      (for{
+         (tag, entries) <- cache
+         entry <- entries
+       } yield Math.log(tagScores(entry, model, weights, classes)(tag))
+      ).toList.reduceLeft(_+_)
+    val gaussianPrior = 0.0 //TODO: add gaussian prior
+    
     -(totalLogProb + gaussianPrior)
   }
 
-  def classify(model: Map[Tuple2[String, String], Double], file: File): Map[String, Double] = {
-    val classes = model.keys.map( key => key._1 ).toList.distinct
-    val scores = (for(c <- classes) 
-                    yield (c -> (for(word <- Source.fromFile(file).mkString.split(" ").map(_.toLowerCase)) 
-                                   yield model(c -> word)
-                                ).toList.foldLeft(model(c -> "DEFAULT"))(_+_)
-                          )
-                 ).toList.foldLeft(Map[String, Double]())(_+_)
+  def tagScores(features: List[String], model: Map[(String, String), Int], weights: Array[Double], classes: List[String]): Map[String, Double] = {
+    val scores =
+      (for( c <- classes )
+         yield (c -> (for( feature <- features )
+                        yield (if(model.contains(c -> feature)) weights(model(c -> feature)) else 0.0)
+                     ).toList.foldLeft(weights(model(c -> "DEFAULT")))(_+_)
+               )
+      ).toList.foldLeft(Map[String, Double]())(_+_)
 
     expNormalize(scores)
   }
@@ -112,25 +148,23 @@ class MaxEntChineseWordSegmenter {
   }
 
   private object CGWrapper {
-    def fminNCG(value: (Array[Tuple2[Int, Double]]) => Double,
-                gradient: (Array[Tuple2[Int, Double]]) => Array[Double],
-                stats: Array[Tuple2[Int, Double]]
+    def fminNCG(value: (Map[String, List[List[String]]], Map[(String, String), Int], Array[Double]) => Double,
+                gradient: (Map[String, List[List[String]]], Map[(String, String), Int], Array[Double]) => Array[Double],
+                cache: Map[String, List[List[String]]],
+                featureMap: Map[(String, String), Int],
+                initialWeights: Array[Double]
                ): Array[Double] = {
-      val initialWeights = stats.map( stat => stat._2 ).toArray
-      val features = stats.map( stat => stat._1 ).toArray
       val model = new Parameters { val weights = Weights(new DenseTensor1(initialWeights.size)) }
 
-      model.weights.value := initialWeights.toArray
+      model.weights.value := initialWeights
 
       val optimizer = new ConjugateGradient
       val gradientMap = model.parameters.blankDenseMap
 
       while (!optimizer.isConverged) {
-        val newStats = features.toList.zip(model.weights.value.asArray.toList).toArray
+        gradientMap(model.weights) = new DenseTensor1(gradient(cache, featureMap, model.weights.value.asArray))
 
-        gradientMap(model.weights) = new DenseTensor1(gradient(newStats))
-
-        val currentValue = value(newStats)
+        val currentValue = value(cache, featureMap, model.weights.value.asArray)
 
         optimizer.step(model.parameters, gradientMap, currentValue)
       }
