@@ -100,24 +100,13 @@
   <build>
     <plugins>
       <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-jar-plugin</artifactId>
-        <configuration>
-          <archive>
-            <manifest>
-              <addClasspath>true</addClasspath>
-              <mainClass>com.oskarsinger.app.MaxEntExample</mainClass>
-            </manifest>
-          </archive>
-        </configuration>
-      </plugin>
-      <plugin>
         <groupId>org.scala-tools</groupId>
         <artifactId>maven-scala-plugin</artifactId>
+        <version>2.14.2</version>
         <configuration>
           <launchers>
             <launcher>
-              <id>exp</id>
+              <id>MaxEntExample</id>
               <mainClass>com.oskarsinger.app.MaxEntExample</mainClass>
               <jvmArgs>
                 <jvmArg>-Xmx2g</jvmArg>

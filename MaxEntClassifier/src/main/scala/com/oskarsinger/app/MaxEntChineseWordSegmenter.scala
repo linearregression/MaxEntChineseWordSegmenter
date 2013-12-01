@@ -23,6 +23,8 @@ class MaxEntChineseWordSegmenter {
       featureMap(feature) = weightsBuffer.size - 1
     }
 
+    assert( weightsBuffer.size == featureMap.size )
+
     val weights = weightsBuffer.toArray
 
     (for( i <- 0 until characters.size )
@@ -30,13 +32,6 @@ class MaxEntChineseWordSegmenter {
                 tagScores(getFeatures(i, characters), featureMap, weights, classes).toList.sortWith( (x,y) => x._2 > y._2 )(0)._1
              )
     ).toList.foldRight(List[(String, String)]())(_+:_)
-  }
-
-  //Returns the list of features for a character in an unsegmented data set
-  def getFeatures(i: Int, characters: List[String]): List[String] = {
-    if( i == 0 ) List( characters(i), ("NEXT" + characters(i+1))) 
-    else if(i == characters.size - 1) List( ("PREV" + characters(i-1)), characters(i) )
-    else List( ("PREV" + characters(i-1)), characters(i), ("NEXT" + characters(i+1)) )
   }
 
   def train(filePath: String): Map[(String, String), Double] = {
@@ -49,18 +44,18 @@ class MaxEntChineseWordSegmenter {
       val current = taggedTraining(i) 
       val character = current._1.toString
       val tag = current._2
-      val features: List[(String, String)] = 
-        if( i == 0 ) List( (tag -> character), (tag -> ("NEXT" + taggedTraining(i+1)._1))) 
-        else if(i == taggedTraining.size - 1) List( (tag -> ("PREV" + taggedTraining(i-1)._1)), (tag -> character) )
-        else List( (tag -> ("PREV" + taggedTraining(i-1)._1)), (tag -> character), (tag -> ("NEXT" + taggedTraining(i+1)._1)) )
+      val features: List[String] = 
+        if( i == 0 ) List( character, ("NEXT" + taggedTraining(i+1)._1)) 
+        else if(i == taggedTraining.size - 1) List( ("PREV" + taggedTraining(i-1)._1), character )
+        else List( ("PREV" + taggedTraining(i-1)._1), character, ("NEXT" + taggedTraining(i+1)._1) )
 
       cache(tag) = cache(tag)
-      cache(tag) += features.map( feature => feature._2 )
+      cache(tag) += features
 
       features.foreach{ feature =>
-        if(!model.contains(feature)){
+        if(!model.contains(tag -> feature)){
           weights += 0.0
-          model(feature) = weights.size - 1
+          model(tag -> feature) = weights.size - 1
         }
       }
     }
@@ -73,9 +68,21 @@ class MaxEntChineseWordSegmenter {
     val listCache = cache.map( tagEntry => tagEntry._1 -> tagEntry._2.toList )
     val optimizedWeights = CGWrapper.fminNCG(value, gradient, listCache, model, weights.toArray)
 
-    (for((feature, index) <- model) 
-      yield (feature -> optimizedWeights(index))
-    ).toList.foldLeft(Map[Tuple2[String, String], Double]())(_+_)
+    val newModel =
+      (for((feature, index) <- model) 
+        yield (feature -> optimizedWeights(index))
+      ).toList.foldLeft(Map[Tuple2[String, String], Double]())(_+_)
+
+    assert( newModel.size == model.size )
+
+    newModel
+  }
+  
+  //Returns the list of features for a character in an unsegmented data set
+  def getFeatures(i: Int, characters: List[String]): List[String] = {
+    if( i == 0 ) List( characters(i), ("NEXT" + characters(i+1))) 
+    else if(i == characters.size - 1) List( ("PREV" + characters(i-1)), characters(i) )
+    else List( ("PREV" + characters(i-1)), characters(i), ("NEXT" + characters(i+1)) )
   }
 
   //Labels a pre-segmented training set based on this tag set: 
@@ -167,6 +174,8 @@ class MaxEntChineseWordSegmenter {
                      ).toList.foldLeft(weights(model(c -> "DEFAULT")))(_+_)
                )
       ).toList.foldLeft(Map[String, Double]())(_+_)
+
+    assert( scores.size == classes.size )
 
     expNormalize(scores)
   }
