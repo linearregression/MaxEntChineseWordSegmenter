@@ -14,7 +14,7 @@ object MaxEntExample extends App {
   val testingLines = Source.fromFile(testingCorpusPath).getLines.toList
   val testingTags =
     (for(line <- testingLines)
-      yield segmenter.segment(line).map( character => character._2 )
+      yield segmenter.segment(line, model).map( character => character._2 )
     ).toList.reduceLeft(_++_)
 
   assert( testingTags.size > 0 )
@@ -25,6 +25,7 @@ object MaxEntExample extends App {
   assert( testingTags.size == goldTags.size )
 
   val correspondingTags = testingTags.zip(goldTags)
-  val numMatches = correspondingTags.count( tags => tag._1 equals tag._2 ) * 1.0
+  val numMatches = correspondingTags.count( tags => tags._1 equals tags._2 ) * 1.0
+
   println(numMatches / correspondingTags.size) 
 }
