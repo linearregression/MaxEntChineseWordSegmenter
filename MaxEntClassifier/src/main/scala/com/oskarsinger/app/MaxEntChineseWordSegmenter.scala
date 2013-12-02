@@ -1,4 +1,4 @@
-package MaxEntClassification
+package com.oskarsinger.app
 
 import scala.collection.mutable.Map
 import scala.collection.mutable.ArrayBuffer
