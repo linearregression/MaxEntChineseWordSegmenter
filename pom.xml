@@ -113,12 +113,6 @@
               </jvmArgs>
             </launcher>
           </launchers>
-          <jvmArgs>
-            <jvmArg>-Xms128m</jvmArg>
-           </jvmArgs>
-          <jvmArgs>
-            <jvmArg>-Xmx2g</jvmArg>
-          </jvmArgs>
           <scalaVersion>${scala.version}</scalaVersion>
         </configuration>
         <executions>
@@ -145,4 +139,5 @@
       </plugin>
     </plugins>
   </build>
+
 </project>

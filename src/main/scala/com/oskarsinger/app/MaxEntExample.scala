@@ -1,4 +1,4 @@
-package MaxEntClassification
+package com.oskarsinger.app
 
 import scala.io.Source
 

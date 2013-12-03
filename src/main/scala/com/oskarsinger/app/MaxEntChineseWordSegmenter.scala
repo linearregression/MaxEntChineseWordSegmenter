@@ -1,4 +1,4 @@
-package MaxEntClassification
+package com.oskarsinger.app
 
 import scala.collection.mutable.Map
 import scala.collection.mutable.ArrayBuffer
@@ -68,11 +68,12 @@ class MaxEntChineseWordSegmenter {
       }
     }
 
+    assert( cache.keys.size == 5 )
     assert( cache.values.reduceLeft(_++_).size == taggedTraining.size )
 
     cache.keys.foreach{ tag =>
       weights += 0.0
-      model(tag -> "DEFAULT") = weights.size
+      model(tag -> "DEFAULT") = weights.size - 1
     }
 
     assert(weights.size == model.size)
@@ -167,7 +168,7 @@ class MaxEntChineseWordSegmenter {
     for{
       (feature, index) <- model
       tag = feature._1
-    } featureCounts(index) = featureCounts(index) - (probability(tag) * featureCounts(index)) - (weights(index) / 2)
+    } featureCounts(index) = -(featureCounts(index) - (probability(tag) * featureCounts(index)) - (weights(index) / 2))
      
     featureCounts
   }
@@ -203,11 +204,12 @@ class MaxEntChineseWordSegmenter {
   //Exponentially normalizes the scores for each tag
   def expNormalize(scores: Map[String, Double]): Map[String, Double] = {
     val minimum = scores.values.min
-    val exScores = scores.map( score => score._1 -> Math.exp(score._2 - minimum) )
-    val normalizer = exScores.values.sum
+    val exScores = scores.map( score => score._1 -> Math.exp(score._2 - minimum) * 1.0 )
+    val normalizer = exScores.values.sum * 1.0
     val normScores = exScores.map( score => score._1 -> score._2/normalizer )
+    val scoreSum = normScores.values.sum
 
-    assert( normScores.values.sum == 1 )
+    //assert( normScores.values.sum == 1 )
 
     normScores
   }
@@ -230,6 +232,7 @@ class MaxEntChineseWordSegmenter {
         gradientMap(model.weights) = new DenseTensor1(gradient(cache, featureMap, model.weights.value.asArray))
 
         val currentValue = value(cache, featureMap, model.weights.value.asArray)
+        println(currentValue)
 
         optimizer.step(model.parameters, gradientMap, currentValue)
       }
