@@ -4,7 +4,7 @@ import scala.collection.mutable.Map
 import scala.collection.mutable.ArrayBuffer
 import scala.io.Source
 import java.io.File
-import cc.factorie.la._
+import cc.factorie.la.DenseTensor1
 import cc.factorie.optimize.ConjugateGradient
 import cc.factorie.model.{Parameters, Weights}
 
@@ -31,7 +31,7 @@ class MaxEntChineseWordSegmenter {
     val taggedData =
       (for( i <- 0 until characters.size )
          yield (characters(i) -> 
-                  scoreChar(getFeatures(i, characters), featureMap, weights, classes).toList.sortWith( (x,y) => x._2 > y._2 )(0)._1
+                  tagScores(getFeatures(i, characters), featureMap, weights, classes).toList.sortWith( (x,y) => x._2 > y._2 )(0)._1
                )
       ).toList.foldRight(List[(String, String)]())(_+:_)
 
@@ -47,48 +47,38 @@ class MaxEntChineseWordSegmenter {
     assert(taggedTraining.size >= 1)
     assert(taggedTraining.size == trainingChars.size)
 
-    val uniqueFeatures = scala.collection.mutable.Set[String]()
-    val cache = Map[(String, Int), ArrayBuffer[List[String]]]().withDefault( x => new ArrayBuffer[List[String]]() )
-    val tagToIndex = Map[String, Int]()
+    val weights = new ArrayBuffer[Double]()
+    val model = Map[(String, String), Int]()
+    val cache = Map[String, ArrayBuffer[List[String]]]().withDefault( x => new ArrayBuffer[List[String]]() )
 
     ( 0 until taggedTraining.size ).foreach{ i =>
       val current = taggedTraining(i) 
       val character = current._1.toString
       val tag = current._2
-      val maximum = if(tagToIndex.isEmpty) -1 else tagToIndex.values.max
-      
-      if(!tagToIndex.contains(tag)) tagToIndex(tag) = maximum + 1
-
-      val cacheTag = tag -> tagToIndex(tag)
       val features: List[String] = getFeatures(i, trainingChars)
 
-      uniqueFeatures ++= features
-      cache(cacheTag) = cache(cacheTag)
-      cache(cacheTag) += features
+      cache(tag) = cache(tag)
+      cache(tag) += features
+
+      features.foreach{ feature =>
+        if(!model.contains(tag -> feature)){
+          weights += 0.0
+          model(tag -> feature) = weights.size - 1
+        }
+      }
     }
-
-    var count = 0
-    val model =
-      (for{
-         (tag, index) <- cache.keys.toList.sortWith( (x,y) => x._2 < y._2 )
-         feature <- uniqueFeatures.toList
-       } yield {
-           val temp = count
-           count += 1
-           (tag -> feature) -> temp
-       }
-      ).toList.foldLeft(Map[(String, String), Int]())(_+_)
-
-    val weights = ArrayBuffer.fill(model.size)(0.0)
 
     assert( cache.keys.size == 5 )
     assert( cache.values.reduceLeft(_++_).size == taggedTraining.size )
-    
-    val numFeatures = uniqueFeatures.size
-    val listCache = cache.map( 
-                      tagEntry => tagEntry._1 -> tagEntry._2.toList.map( 
-                        entry => entry.map( 
-                          feature => model(tagEntry._1._1 -> feature) ) ) )
+
+    cache.keys.foreach{ tag =>
+      weights += 0.0
+      model(tag -> "DEFAULT") = weights.size - 1
+    }
+
+    assert(weights.size == model.size)
+
+    val listCache = cache.map( tagEntry => tagEntry._1 -> tagEntry._2.toList )
 
     assert(listCache.values.reduceLeft(_++_).size == taggedTraining.size)
 
@@ -155,44 +145,54 @@ class MaxEntChineseWordSegmenter {
 
   def isWhiteSpace(character: Char): Boolean = List( (0x0000, 0x0020) ).exists( range => character >= range._1 && character <= range._2)
 
-  def gradient(fullSparseCache: SparseBinaryTensor2,
-               probTables: Map[(String, Int), Array[Array[Double]]], 
-               model: Map[(String, String), Int],
-               weights: Array[Double], 
-               globalFeatureCounts: Array[Double]
-              ): Array[Double] = {
-    val fullProbTable = new DenseTensor2(probTables.values.reduceLeft(_++_))
-    val transProbTable = fullProbTable.transpose
-    val expectations = fullSparseCache.leftMultiply(transProbTable).transpose.asArray.reduceLeft(_++_)
+  def gradient(cache: Map[String, List[List[String]]], model: Map[(String, String), Int], weights: Array[Double]): Array[Double] = {
+    val classes = cache.keys.toList
+    val featureCounts = new Array[Double](weights.size)
+
+    for{
+      (tag, entries) <- cache
+      entry <- entries
+      feature <- entry
+    } featureCounts(model(tag -> feature)) += 1
+    
+    val probability =
+      (for(tag <- classes)
+         yield (tag -> (for{
+                          entries <- cache.values
+                          entry <- entries
+                        } yield tagScores(entry, model, weights, classes)(tag)
+                       ).toList.reduceLeft(_+_)
+               )
+      ).toList.foldLeft(Map[String, Double]())(_+_)
 
     for{
       (feature, index) <- model
       tag = feature._1
-    } globalFeatureCounts(index) = globalFeatureCounts(index) - expectations(index) - (weights(index) / 2)
+    } featureCounts(index) = -(featureCounts(index) - (probability(tag) * featureCounts(index)) - (weights(index) / 2))
      
-    globalFeatureCounts
+    featureCounts
   }
 
-  def value(probTables: Map[(String, Int), Array[Array[Double]]], weights: Array[Double]): Double = {
+  def value(cache: Map[String, List[List[String]]], model: Map[(String, String), Int], weights: Array[Double]): Double = {
+    val classes = cache.keys.toList
     val totalLogProb =
       (for{
-         (key, entries) <- probTables
-         index = key._2
+         (tag, entries) <- cache
          entry <- entries
-       } yield Math.log(entry(index))
-      ).toList.sum
+       } yield Math.log(tagScores(entry, model, weights, classes)(tag))
+      ).toList.reduceLeft(_+_)
     val gaussianPrior = weights.toList.map( weight => weight * weight ).sum
     
-    (totalLogProb - gaussianPrior)
+    -(totalLogProb - gaussianPrior)
   }
 
   //Gives a map from tags to exponentially normalized scores for a character based on its features and the corresponding weights
-  def scoreChar(features: List[String], model: Map[(String, String), Int], weights: Array[Double], classes: List[String]): Map[String, Double] = {
+  def tagScores(features: List[String], model: Map[(String, String), Int], weights: Array[Double], classes: List[String]): Map[String, Double] = {
     val scores =
       (for( c <- classes )
-         yield (c -> ( for( feature <- features ) 
-                         yield (if(model.contains(c -> feature)) weights(model(c->feature)) else 0.0) 
-                     ).toList.sum
+         yield (c -> (for( feature <- features )
+                        yield (if(model.contains(c -> feature)) weights(model(c -> feature)) else 0.0)
+                     ).toList.foldLeft(weights(model(c -> "DEFAULT")))(_+_)
                )
       ).toList.foldLeft(Map[String, Double]())(_+_)
 
@@ -202,44 +202,25 @@ class MaxEntChineseWordSegmenter {
   }
 
   //Exponentially normalizes the scores for each tag
-  def expNormalize(scoreMap: Map[String, Double]): Map[String, Double] = {
-    val tags = scoreMap.keys.toList
-    val scores = scoreMap.values.toArray
+  def expNormalize(scores: Map[String, Double]): Map[String, Double] = {
+    val minimum = scores.values.min
+    val exScores = scores.map( score => score._1 -> Math.exp(score._2 - minimum) * 1.0 )
+    val normalizer = exScores.values.sum * 1.0
+    val normScores = exScores.map( score => score._1 -> score._2/normalizer )
+    val scoreSum = normScores.values.sum
 
-    (for( item <- tags.zip(expNormalize(scores).toList)) yield item).toList.foldLeft(Map[String, Double]())(_+_)
-  }
+    //assert( normScores.values.sum == 1 )
 
-  def expNormalize(scores: Array[Double]): Array[Double] = {
-    val minimum = scores.min
-    val exScores = scores.map( score => Math.exp(score - minimum) * 1.0 )
-    val normalizer = exScores.sum
-
-    exScores.map( score => score/normalizer )
+    normScores
   }
 
   private object CGWrapper {
-    def fminNCG(value: (Map[(String, Int), Array[Array[Double]]], 
-                        Array[Double]
-                       ) => Double,
-                gradient: (SparseBinaryTensor2,
-                           Map[(String, Int), Array[Array[Double]]], 
-                           Map[(String, String), Int],
-                           Array[Double], 
-                           Array[Double]
-                          ) => Array[Double],
-                cache: Map[(String, Int), List[List[Int]]],
+    def fminNCG(value: (Map[String, List[List[String]]], Map[(String, String), Int], Array[Double]) => Double,
+                gradient: (Map[String, List[List[String]]], Map[(String, String), Int], Array[Double]) => Array[Double],
+                cache: Map[String, List[List[String]]],
                 featureMap: Map[(String, String), Int],
                 initialWeights: Array[Double]
                ): Array[Double] = {
-      
-      val globalFeatureCounts = getGlobalFeatureCounts(cache, featureMap)
-      val numFeatures = globalFeatureCounts.size/cache.keys.toList.size
-      val modCache = cache.map( 
-                       tagEntry => tagEntry._1 -> tagEntry._2.map(
-                         _.map( feature => feature % numFeatures ) 
-                       ) 
-                     )
-      val fullSparseCache = getFullSparseCache(modCache, numFeatures)
       val model = new Parameters { val weights = Weights(new DenseTensor1(initialWeights.size)) }
 
       model.weights.value := initialWeights
@@ -248,66 +229,15 @@ class MaxEntChineseWordSegmenter {
       val gradientMap = model.parameters.blankDenseMap
 
       while (!optimizer.isConverged) {
-        val weights = model.weights.value.asArray
-        val probMatrix = getProbMatrix(weights, modCache)
-        
-        gradientMap(model.weights) = new DenseTensor1(gradient(fullSparseCache, probMatrix, featureMap, weights, globalFeatureCounts))
+        gradientMap(model.weights) = new DenseTensor1(gradient(cache, featureMap, model.weights.value.asArray))
 
-        val currentValue = value(probMatrix, weights)
+        val currentValue = value(cache, featureMap, model.weights.value.asArray)
+        println(currentValue)
 
         optimizer.step(model.parameters, gradientMap, currentValue)
       }
 
       model.weights.value.asArray
     }
-  }
-
-  def getGlobalFeatureCounts(cache: Map[(String, Int), List[List[Int]]], model: Map[(String, String), Int]): Array[Double] = {
-    val featureCounts = new Array[Double](model.keys.toList.size) 
-
-    for{
-      (tag, entries) <- cache
-      entry <- entries
-      feature <- entry
-    } featureCounts(feature) += 1
-
-    featureCounts
-  }
-
-  def getFullSparseCache(modCache: Map[(String, Int), List[List[Int]]], numFeatures: Int): SparseBinaryTensor2 = {
-    val fullCache = modCache.values.reduceLeft(_++_)
-    val docTensor = new SparseBinaryTensor2(numFeatures, fullCache.size)
-
-    var count = 0
-
-    fullCache.foreach{ entry =>
-      entry.foreach( feature => docTensor +=(feature, count) )
-      count += 1
-    }
-
-    docTensor
-  }
-
-  def getProbMatrix(weights: Array[Double], cache: Map[(String, Int), List[List[Int]]]): Map[(String, Int), Array[Array[Double]]] = {
-    val numClasses = cache.keys.toList.size
-    val numFeatures = weights.size/numClasses
-
-    val weightsTable = 
-      (for( i <- 0 until numClasses ) 
-         yield weights.slice(0 + i * numFeatures, numFeatures + i * numFeatures)
-      ).toArray
-
-    val weightsTensor = new DenseTensor2(weightsTable)
-
-    (for( (tag, entries) <- cache )
-       yield (tag -> (for(entry <- entries)
-                        yield {
-                          val docTensor = new SparseBinaryTensor1(numFeatures)
-                          docTensor ++= entry
-                          expNormalize(weightsTensor.leftMultiply(docTensor).asArray)
-                        }
-                     ).toArray
-             )
-    ).toList.foldLeft(Map[(String, Int), Array[Array[Double]]]())(_+_)
   }
 }
