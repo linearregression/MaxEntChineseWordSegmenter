@@ -82,7 +82,7 @@ class MaxEntChineseWordSegmenter {
 
     assert(listCache.values.reduceLeft(_++_).size == taggedTraining.size)
 
-    val optimizedWeights = CGWrapper.fminNCG(value, gradient, listCache, model, weights.toArray)
+    val optimizedWeights = CGWrapper.fmaxNCG(value, gradient, listCache, model, weights.toArray)
 
     val newModel =
       (for((feature, index) <- model) 
@@ -145,32 +145,24 @@ class MaxEntChineseWordSegmenter {
 
   def isWhiteSpace(character: Char): Boolean = List( (0x0000, 0x0020) ).exists( range => character >= range._1 && character <= range._2)
 
-  def gradient(cache: Map[String, List[List[String]]], model: Map[(String, String), Int], weights: Array[Double]): Array[Double] = {
+  def gradient(cache: Map[String, List[List[String]]], 
+               model: Map[(String, String), Int], 
+               weights: Array[Double],
+               globalFeatureCounts: Array[Double]
+              ): Array[Double] = {
     val classes = cache.keys.toList
-    val featureCounts = new Array[Double](weights.size)
-
-    for{
-      (tag, entries) <- cache
-      entry <- entries
-      feature <- entry
-    } featureCounts(model(tag -> feature)) += 1
     
     val probability =
-      (for(tag <- classes)
-         yield (tag -> (for{
-                          entries <- cache.values
-                          entry <- entries
-                        } yield tagScores(entry, model, weights, classes)(tag)
-                       ).toList.reduceLeft(_+_)
-               )
-      ).toList.foldLeft(Map[String, Double]())(_+_)
+      (for{
+         entries <- cache.values
+         entry <- entries
+       } yield tagScores(entry, model, weights, classes).values.sum
+      ).toList.sum
 
-    for{
-      (feature, index) <- model
-      tag = feature._1
-    } featureCounts(index) = (featureCounts(index) - (probability(tag) * featureCounts(index)) - (weights(index) / 2))
+    for( (feature, index) <- model )
+      globalFeatureCounts(index) = (globalFeatureCounts(index) - (probability * globalFeatureCounts(index)) - (weights(index) * 2))
      
-    featureCounts
+    globalFeatureCounts
   }
 
   def value(cache: Map[String, List[List[String]]], model: Map[(String, String), Int], weights: Array[Double]): Double = {
@@ -180,10 +172,10 @@ class MaxEntChineseWordSegmenter {
          (tag, entries) <- cache
          entry <- entries
        } yield Math.log(tagScores(entry, model, weights, classes)(tag))
-      ).toList.reduceLeft(_+_)
+      ).toList.sum
     val gaussianPrior = weights.toList.map( weight => weight * weight ).sum
     
-    -(totalLogProb - gaussianPrior)
+    (totalLogProb - gaussianPrior)
   }
 
   //Gives a map from tags to exponentially normalized scores for a character based on its features and the corresponding weights
@@ -215,13 +207,27 @@ class MaxEntChineseWordSegmenter {
   }
 
   private object CGWrapper {
-    def fminNCG(value: (Map[String, List[List[String]]], Map[(String, String), Int], Array[Double]) => Double,
-                gradient: (Map[String, List[List[String]]], Map[(String, String), Int], Array[Double]) => Array[Double],
+    def fmaxNCG(value: (Map[String, List[List[String]]], 
+                        Map[(String, String), Int], 
+                        Array[Double]
+                       ) => Double,
+                gradient: (Map[String, List[List[String]]], 
+                           Map[(String, String), Int], 
+                           Array[Double], 
+                           Array[Double]
+                          ) => Array[Double],
                 cache: Map[String, List[List[String]]],
                 featureMap: Map[(String, String), Int],
                 initialWeights: Array[Double]
                ): Array[Double] = {
       val model = new Parameters { val weights = Weights(new DenseTensor1(initialWeights.size)) }
+      val featureCounts = new Array[Double](initialWeights.size)
+
+      for{
+        (tag, entries) <- cache
+        entry <- entries
+        feature <- entry
+      } featureCounts(featureMap(tag -> feature)) += 1
 
       model.weights.value := initialWeights
 
@@ -229,7 +235,7 @@ class MaxEntChineseWordSegmenter {
       val gradientMap = model.parameters.blankDenseMap
 
       while (!optimizer.isConverged) {
-        gradientMap(model.weights) = new DenseTensor1(gradient(cache, featureMap, model.weights.value.asArray))
+        gradientMap(model.weights) = new DenseTensor1(gradient(cache, featureMap, model.weights.value.asArray, featureCounts))
 
         val currentValue = value(cache, featureMap, model.weights.value.asArray)
         println(currentValue)
