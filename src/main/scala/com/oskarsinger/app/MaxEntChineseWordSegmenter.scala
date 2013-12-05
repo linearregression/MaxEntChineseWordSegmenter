@@ -152,15 +152,16 @@ class MaxEntChineseWordSegmenter {
               ): Array[Double] = {
     val classes = cache.keys.toList
     
-    val probability =
-      (for{
-         entries <- cache.values
-         entry <- entries
-       } yield tagScores(entry, model, weights, classes).values.sum
-      ).toList.sum
+    for{
+      (tag, entries) <- cache
+      entry <- entries
+      score = tagScores(entry, model, weights, classes)(tag)
+      feature <- entry
+      index = model(tag -> feature)
+    } globalFeatureCounts(index) = globalFeatureCounts(index) - score
 
     for( (feature, index) <- model )
-      globalFeatureCounts(index) = (globalFeatureCounts(index) - (probability * globalFeatureCounts(index)) - (weights(index) * 2))
+      globalFeatureCounts(index) = globalFeatureCounts(index) - (weights(index) * 2)
      
     globalFeatureCounts
   }
