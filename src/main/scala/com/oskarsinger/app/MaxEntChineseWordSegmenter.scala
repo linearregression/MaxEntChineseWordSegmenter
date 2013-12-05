@@ -168,7 +168,7 @@ class MaxEntChineseWordSegmenter {
     for{
       (feature, index) <- model
       tag = feature._1
-    } featureCounts(index) = -(featureCounts(index) - (probability(tag) * featureCounts(index)) - (weights(index) / 2))
+    } featureCounts(index) = (featureCounts(index) - (probability(tag) * featureCounts(index)) - (weights(index) / 2))
      
     featureCounts
   }
