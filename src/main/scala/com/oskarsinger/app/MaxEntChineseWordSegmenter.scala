@@ -1,7 +1,6 @@
 package com.oskarsinger.app
 
-import scala.collection.mutable.Map
-import scala.collection.mutable.ArrayBuffer
+import scala.collection.mutable.{ArrayBuffer, Map}
 import scala.io.Source
 import java.io.File
 import cc.factorie.la.DenseTensor1
@@ -87,7 +86,7 @@ class MaxEntChineseWordSegmenter {
     val newModel =
       (for((feature, index) <- model) 
         yield (feature -> optimizedWeights(index))
-      ).toList.foldLeft(Map[Tuple2[String, String], Double]())(_+_)
+      ).toList.foldLeft(Map[(String, String), Double]())(_+_)
 
     assert( newModel.size == model.size )
 
@@ -97,10 +96,20 @@ class MaxEntChineseWordSegmenter {
   //Returns the list of features for a character in an unsegmented data set
   def getFeatures(i: Int, characters: Array[String]): List[String] = {
     val features =
-      if( i == 0 ) List( characters(i), ("NEXT" + characters(i+1))) 
-      else if(i == characters.size - 1) List( ("PREV" + characters(i-1)), characters(i) )
-      else List( ("PREV" + characters(i-1)), characters(i), ("NEXT" + characters(i+1)) )
-    
+      (for( j <- i - 1 to i + 1 )
+         yield{
+           if(j >= 0 && j < characters.size){
+             val current = characters(j)
+
+             if(j == i - 2) ("PRPR" + current)
+             else if(j == i - 1) ("PR" + current)
+             else if(j == i) current
+             else if(j == i + 1) ("NX" + current)
+             else ("NXNX" + current)
+           } else "INVALID"
+         }
+      ).toList.filter(feature => !feature.equals("INVALID") )
+
     assert(features.size >= 2)
 
     features
@@ -158,10 +167,10 @@ class MaxEntChineseWordSegmenter {
       score = tagScores(entry, model, weights, classes)(tag)
       feature <- entry
       index = model(tag -> feature)
-    } globalFeatureCounts(index) = globalFeatureCounts(index) - score
+    } globalFeatureCounts(index) -= score
 
     for( (feature, index) <- model )
-      globalFeatureCounts(index) = globalFeatureCounts(index) - (weights(index) * 2)
+      globalFeatureCounts(index) -= (weights(index) * 2)
      
     globalFeatureCounts
   }
