@@ -1,4 +1,4 @@
-MaxEntClassifier
+MaxEntChineseWordSegmenter
 ================
 
 A MaxEnt classifier written in Scala
