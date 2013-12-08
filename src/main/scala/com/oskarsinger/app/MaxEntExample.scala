@@ -11,11 +11,13 @@ object MaxEntExample extends App {
   assert( model.size > 0 )
 
   val testingCorpusPath = "/home/oskar/GitRepos/SegmentationData/testing/pku_test.utf8"  
-  val testingLines = Source.fromFile(testingCorpusPath).getLines.toList
-  val testingTags =
+  val testingFile = new java.io.File(testingCorpusPath)
+  val testingTags = segmenter.segment(testingFile, model).map( taggedCharacter => taggedCharacter._2 )
+  /*
     (for(line <- testingLines)
       yield segmenter.segment(line, model).map( character => character._2 )
     ).toList.reduceLeft(_++_)
+  */
 
   assert( testingTags.size > 0 )
 
@@ -25,6 +27,7 @@ object MaxEntExample extends App {
   assert( testingTags.size == goldTags.size )
 
   val correspondingTags = testingTags.zip(goldTags)
+
   val numMatches = correspondingTags.count( tags => tags._1 equals tags._2 ) * 1.0
 
   println(numMatches / correspondingTags.size) 

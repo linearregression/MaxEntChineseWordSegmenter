@@ -11,8 +11,8 @@ class MaxEntChineseWordSegmenter {
 
   //Returns a list of 2-tuples that holds the characters of a phrase
   //original order mapped to their maxent-classified tags
-  def segment(text: String, model: Map[(String, String), Double]): List[(String, String)] = {
-    val characters = text.toList.map( character => character.toString ).toArray
+  def segment(text: List[Char], model: Map[(String, String), Double]): List[(String, String)] = {
+    val characters = text.map( character => character.toString ).toArray
     val weightsBuffer = new ArrayBuffer[Double]()
     val featureMap = Map[(String, String), Int]()
     val classes = model.keys.map( key => key._1 ).toList.distinct
@@ -37,6 +37,18 @@ class MaxEntChineseWordSegmenter {
     assert( taggedData.size == characters.size )
 
     taggedData
+  }
+
+  def segment(file: File, model: Map[(String, String), Double]): List[(String, String)] = {
+    val text = Source.fromFile(file).mkString
+
+    segment(text, model)
+  }
+
+  def segment(text: String, model: Map[(String, String), Double]): List[(String, String)] = {
+    val characters = text.toList.filter( character => !isWhiteSpace(character) )
+    
+    segment(characters, model)
   }
 
   def train(filePath: String): Map[(String, String), Double] = {
@@ -110,7 +122,7 @@ class MaxEntChineseWordSegmenter {
          }
       ).toList.filter(feature => !feature.equals("INVALID") )
 
-    assert(features.size >= 2)
+    //assert(features.size >= 2)
 
     features
   }
@@ -152,7 +164,8 @@ class MaxEntChineseWordSegmenter {
     punctuationChars.exists( range => character >= range._1 && character <= range._2 )
   }
 
-  def isWhiteSpace(character: Char): Boolean = List( (0x0000, 0x0020) ).exists( range => character >= range._1 && character <= range._2)
+  def isWhiteSpace(character: Char): Boolean = 
+    List( (0x0000, 0x0020), (0x0085, 0x0085), (0x2028, 0x2029) ).exists( range => character >= range._1 && character <= range._2)
 
   def gradient(cache: Map[String, List[List[String]]], 
                model: Map[(String, String), Int], 
