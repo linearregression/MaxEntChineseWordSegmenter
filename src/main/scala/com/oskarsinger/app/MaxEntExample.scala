@@ -13,11 +13,6 @@ object MaxEntExample extends App {
   val testingCorpusPath = "/home/oskar/GitRepos/SegmentationData/testing/pku_test.utf8"  
   val testingFile = new java.io.File(testingCorpusPath)
   val testingTags = segmenter.segment(testingFile, model).map( taggedCharacter => taggedCharacter._2 )
-  /*
-    (for(line <- testingLines)
-      yield segmenter.segment(line, model).map( character => character._2 )
-    ).toList.reduceLeft(_++_)
-  */
 
   assert( testingTags.size > 0 )
 
